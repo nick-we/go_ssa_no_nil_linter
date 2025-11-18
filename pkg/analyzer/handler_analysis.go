@@ -31,6 +31,9 @@ func analyzeHandler(pass *analysis.Pass, protoAnalyzer *ProtoFieldAnalyzer, nilA
 		return
 	}
 
+	// Track which risky fields are explicitly assigned anywhere in this handler.
+	assigned := make(map[string]bool)
+
 	// NOTE: For now we conservatively treat any store whose base address has
 	// type *Resp as a response field assignment, without restricting to
 	// specific alloc sites. This is sufficient for unit tests and keeps the
@@ -61,6 +64,10 @@ func analyzeHandler(pass *analysis.Pass, protoAnalyzer *ProtoFieldAnalyzer, nilA
 				if fieldInfo.Risk != FieldRiskMessagePointer {
 					continue
 				}
+
+				// Mark this risky field as explicitly assigned in the handler,
+				// regardless of whether the assigned value is nil or not.
+				assigned[fieldInfo.Name] = true
 
 				// Check the value being stored for potential nil.
 				nilAnalyzer.Reset()
@@ -99,6 +106,39 @@ func analyzeHandler(pass *analysis.Pass, protoAnalyzer *ProtoFieldAnalyzer, nilA
 					store.Pos(),
 					"potential nil element in gRPC response slice %s (handler %s.%s)",
 					fieldInfo.Name,
+					h.ServiceName,
+					h.MethodName,
+				)
+			}
+		}
+	}
+	// After scanning all stores, report implicit nils for risky fields that
+	// were never assigned anywhere in the handler.
+	for _, b := range h.Function.Blocks {
+		for _, instr := range b.Instrs {
+			ret, ok := instr.(*ssa.Return)
+			if !ok || len(ret.Results) == 0 {
+				continue
+			}
+			// First result is the response value in a unary handler.
+			resVal := ret.Results[0]
+			if !isResponsePointer(resVal.Type(), respNamed) {
+				continue
+			}
+
+			for _, fi := range msgInfo.Risky {
+				if fi.Risk != FieldRiskMessagePointer {
+					continue
+				}
+				if assigned[fi.Name] {
+					continue
+				}
+
+				pass.Reportf(
+					ret.Pos(),
+					"implicit nil field in gRPC response %s.%s (handler %s.%s)",
+					respNamed.Obj().Name(),
+					fi.Name,
 					h.ServiceName,
 					h.MethodName,
 				)

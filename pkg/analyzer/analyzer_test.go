@@ -20,3 +20,10 @@ func TestListNilAssignment(t *testing.T) {
 	testdata := analysistest.TestData()
 	analysistest.Run(t, testdata, analyzer.NewAnalyzer(), "listnil")
 }
+
+// TestSubNilAssignment verifies that the analyzer flags both implicit and
+// explicit nils for non-optional sub-message fields.
+func TestSubNilAssignment(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, analyzer.NewAnalyzer(), "subnil")
+}

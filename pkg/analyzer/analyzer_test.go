@@ -13,3 +13,10 @@ func TestDirectNilAssignment(t *testing.T) {
 	testdata := analysistest.TestData()
 	analysistest.Run(t, testdata, analyzer.NewAnalyzer(), "directnil")
 }
+
+// TestListNilAssignment verifies that the analyzer flags nil elements assigned
+// into a repeated field (slice of message pointers) in a gRPC response.
+func TestListNilAssignment(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, analyzer.NewAnalyzer(), "listnil")
+}

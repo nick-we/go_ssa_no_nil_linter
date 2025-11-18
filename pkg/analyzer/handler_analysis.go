@@ -37,47 +37,72 @@ func analyzeHandler(pass *analysis.Pass, protoAnalyzer *ProtoFieldAnalyzer, nilA
 	// analysis simple; it can be refined later to track specific response
 	// instances.
 
-	// For each instruction, look for stores to response fields.
+	// For each instruction, look for stores to response fields or slice elements.
 	for _, b := range h.Function.Blocks {
 		for _, instr := range b.Instrs {
 			store, ok := instr.(*ssa.Store)
 			if !ok {
 				continue
 			}
-			fieldAddr, ok := store.Addr.(*ssa.FieldAddr)
-			if !ok {
-				continue
-			}
 
-			// Ensure the base address is a pointer to the response type.
-			if !isResponsePointer(fieldAddr.X.Type(), respNamed) {
-				continue
-			}
+			switch addr := store.Addr.(type) {
+			case *ssa.FieldAddr:
+				// Direct struct field assignment, e.g. resp.Profile = v.
+				if !isResponsePointer(addr.X.Type(), respNamed) {
+					continue
+				}
 
-			// Map field index to FieldInfo.
-			fieldInfo, ok := msgInfo.FieldByID[fieldAddr.Field]
-			if !ok {
-				continue
-			}
-			if fieldInfo.Risk == FieldRiskSafe {
-				continue
-			}
+				// Map field index to FieldInfo.
+				fieldInfo, ok := msgInfo.FieldByID[addr.Field]
+				if !ok {
+					continue
+				}
+				// Only scalar message-pointer fields are treated as direct-field risks.
+				if fieldInfo.Risk != FieldRiskMessagePointer {
+					continue
+				}
 
-			// Check the value being stored for potential nil.
-			nilAnalyzer.Reset()
-			if !nilAnalyzer.IsMaybeNil(store.Val) {
-				continue
-			}
+				// Check the value being stored for potential nil.
+				nilAnalyzer.Reset()
+				if !nilAnalyzer.IsMaybeNil(store.Val) {
+					continue
+				}
 
-			// Report diagnostic.
-			pass.Reportf(
-				store.Pos(),
-				"potential nil field in gRPC response %s.%s (handler %s.%s)",
-				respNamed.Obj().Name(),
-				fieldInfo.Name,
-				h.ServiceName,
-				h.MethodName,
-			)
+				// Report diagnostic for direct field.
+				pass.Reportf(
+					store.Pos(),
+					"potential nil field in gRPC response %s.%s (handler %s.%s)",
+					respNamed.Obj().Name(),
+					fieldInfo.Name,
+					h.ServiceName,
+					h.MethodName,
+				)
+
+			case *ssa.IndexAddr:
+				// Slice/array element assignment, e.g. resp.Users[i] = v.
+				// We conservatively match based on the element container type:
+				// if the slice type matches a repeated message field on the response,
+				// we treat this as a potential nil element assignment.
+				fieldInfo, ok := matchRepeatedSliceField(addr.X.Type(), msgInfo)
+				if !ok || fieldInfo.Risk != FieldRiskRepeatedMessagePointer {
+					continue
+				}
+
+				// Check the value being stored for potential nil.
+				nilAnalyzer.Reset()
+				if !nilAnalyzer.IsMaybeNil(store.Val) {
+					continue
+				}
+
+				// Report diagnostic for slice element.
+				pass.Reportf(
+					store.Pos(),
+					"potential nil element in gRPC response slice %s (handler %s.%s)",
+					fieldInfo.Name,
+					h.ServiceName,
+					h.MethodName,
+				)
+			}
 		}
 	}
 }
@@ -98,37 +123,19 @@ func isResponsePointer(t types.Type, respNamed *types.Named) bool {
 	return types.Identical(elemNamed, respNamed)
 }
 
-// resolveAlloc attempts to recover the underlying *ssa.Alloc for v,
-// following simple phi/unop edges. It is intentionally conservative.
-func resolveAlloc(v ssa.Value, seen map[ssa.Value]bool) *ssa.Alloc {
-	if v == nil {
-		return nil
+// matchRepeatedSliceField tries to find a repeated-message field on the
+// response whose Go type matches the provided slice/array type.
+func matchRepeatedSliceField(t types.Type, msgInfo *ProtoMessageInfo) (FieldInfo, bool) {
+	if msgInfo == nil || t == nil {
+		return FieldInfo{}, false
 	}
-	if seen == nil {
-		seen = make(map[ssa.Value]bool)
-	}
-	if seen[v] {
-		return nil
-	}
-	seen[v] = true
-
-	switch val := v.(type) {
-	case *ssa.Alloc:
-		return val
-	case *ssa.Phi:
-		for _, e := range val.Edges {
-			if a := resolveAlloc(e, seen); a != nil {
-				return a
-			}
+	for _, fi := range msgInfo.Fields {
+		if fi.Risk != FieldRiskRepeatedMessagePointer {
+			continue
 		}
-	case *ssa.UnOp:
-		// &x or *x style operations; follow the operand.
-		return resolveAlloc(val.X, seen)
-	case *ssa.ChangeInterface:
-		return resolveAlloc(val.X, seen)
-	case *ssa.MakeInterface:
-		return resolveAlloc(val.X, seen)
+		if types.Identical(fi.Type, t) {
+			return fi, true
+		}
 	}
-
-	return nil
+	return FieldInfo{}, false
 }

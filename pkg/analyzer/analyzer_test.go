@@ -27,3 +27,12 @@ func TestSubNilAssignment(t *testing.T) {
 	testdata := analysistest.TestData()
 	analysistest.Run(t, testdata, analyzer.NewAnalyzer(), "subnil")
 }
+
+// TestDateNilAssignment verifies that the analyzer treats custom date-like
+// proto messages (e.g. Timestamp) as non-optional sub-messages and flags
+// implicit/explicit nils for non-optional fields, while ignoring optional
+// (oneof) fields even when they are nil.
+func TestDateNilAssignment(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, analyzer.NewAnalyzer(), "datenil")
+}

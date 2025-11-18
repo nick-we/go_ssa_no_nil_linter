@@ -28,6 +28,14 @@ func TestSubNilAssignment(t *testing.T) {
 	analysistest.Run(t, testdata, analyzer.NewAnalyzer(), "subnil")
 }
 
+// TestComplexFlowAssignment verifies the analyzer behavior in more complex
+// control-flow scenarios (if/else, switch, and sub-function calls) where
+// the nilness of non-optional response fields depends on the path.
+func TestComplexFlowAssignment(t *testing.T) {
+	testdata := analysistest.TestData()
+	analysistest.Run(t, testdata, analyzer.NewAnalyzer(), "complexflow")
+}
+
 // TestDateNilAssignment verifies that the analyzer treats custom date-like
 // proto messages (e.g. Timestamp) as non-optional sub-messages and flags
 // implicit/explicit nils for non-optional fields, while ignoring optional

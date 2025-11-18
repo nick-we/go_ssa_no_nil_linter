@@ -86,6 +86,62 @@ func (d *GRPCDetector) inspectFunction(fn *ssa.Function) *HandlerInfo {
 	}
 }
 
+// DetectHandlerFromFunc inspects a single SSA function and returns a HandlerInfo
+// if it matches the unary gRPC handler shape:
+//
+//	func (s *Service) Method(ctx context.Context, req *Req) (*Resp, error)
+//
+// where Req and Resp are proto messages.
+func DetectHandlerFromFunc(fn *ssa.Function) *HandlerInfo {
+	if fn == nil || fn.Signature == nil {
+		return nil
+	}
+
+	sig := fn.Signature
+	recv := sig.Recv()
+	if recv == nil {
+		return nil
+	}
+
+	// Expect at least (ctx, req) parameters and exactly (resp, error) results.
+	if sig.Params().Len() < 2 || sig.Results().Len() != 2 {
+		return nil
+	}
+
+	ctxParam := sig.Params().At(0)
+	reqParam := sig.Params().At(1)
+
+	if !isContextType(ctxParam.Type()) {
+		return nil
+	}
+
+	respResult := sig.Results().At(0)
+	errResult := sig.Results().At(1)
+
+	if !isErrorType(errResult.Type()) {
+		return nil
+	}
+
+	// Both request and response must be proto messages.
+	if !isProtoMessage(reqParam.Type()) || !isProtoMessage(respResult.Type()) {
+		return nil
+	}
+
+	serviceType := receiverNamedType(recv.Type())
+	if serviceType == nil {
+		return nil
+	}
+
+	return &HandlerInfo{
+		Function:     fn,
+		ReceiverType: serviceType,
+		RequestType:  reqParam.Type(),
+		ResponseType: respResult.Type(),
+		ServiceName:  serviceType.Obj().Name(),
+		MethodName:   fn.Name(),
+	}
+}
+
 func receiverNamedType(t types.Type) *types.Named {
 	ptr, ok := t.(*types.Pointer)
 	if ok {

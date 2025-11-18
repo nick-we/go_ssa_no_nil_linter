@@ -137,8 +137,16 @@ func isProtoMessage(t types.Type) bool {
 }
 
 func implementsProtoMessage(named *types.Named) bool {
-	for i := 0; i < named.NumMethods(); i++ {
-		if named.Method(i).Name() == "ProtoMessage" {
+	if named == nil {
+		return false
+	}
+
+	// Check method set of *T so we also see pointer-receiver methods like:
+	//   func (*T) ProtoMessage()
+	ptr := types.NewPointer(named)
+	ms := types.NewMethodSet(ptr)
+	for i := 0; i < ms.Len(); i++ {
+		if ms.At(i).Obj().Name() == "ProtoMessage" {
 			return true
 		}
 	}

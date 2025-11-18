@@ -1,6 +1,6 @@
 module github.com/nick-we/go_ssa_no_nil_linter
 
-go 1.25.1
+go 1.25.4
 
 require golang.org/x/tools v0.39.0
 
